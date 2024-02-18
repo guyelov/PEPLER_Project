@@ -196,12 +196,12 @@ with open(model_path, 'rb') as f:
 print(now_time() + 'Tuning both Prompt and LM')
 for param in model.parameters():
     param.requires_grad = True
-optimizer = AdamW(model.parameters(), lr=args.lr)
+optimizer = AdamW(model.parameters(), lr=lr)
 
 # Loop over epochs.
 best_val_loss = float('inf')
 endure_count = 0
-for epoch in range(1, args.epochs + 1):
+for epoch in range(1, epochs + 1):
     print(now_time() + 'epoch {}'.format(epoch))
     train(train_data)
     val_loss = evaluate(val_data)
