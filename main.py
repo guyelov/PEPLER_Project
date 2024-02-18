@@ -17,7 +17,6 @@ def read_config(config_path = "config.yml"):
 
 # Parser for the path of the YAML configuration file
 parser = argparse.ArgumentParser(description='PErsonalized Prompt Learning for Explainable Recommendation (PEPLER)')
-parser.add_argument('--config', type=str, required=True, help='path to configuration YAML file')
 args = parser.parse_args()
 
 # Read configuration from YAML file
@@ -35,6 +34,7 @@ checkpoint = config['checkpoint']
 outf = config['outf']
 endure_times = config['endure_times']
 words = config['words']
+dataset = config['dataset']
 if config['data_path'] is None:
     raise ValueError('data_path should be provided for loading data in the YAML configuration file')
 if config['index_dir'] is None:
@@ -48,12 +48,12 @@ print('-' * 40 + 'ARGUMENTS' + '-' * 40)
 if torch.cuda.is_available():
     if not args.cuda:
         print(now_time() + 'WARNING: You have a CUDA device, so you should probably run with --cuda')
-device = torch.device('cuda' if args.cuda else 'cpu')
-
-if not os.path.exists(args.checkpoint):
-    os.makedirs(args.checkpoint)
-model_path = os.path.join(args.checkpoint, 'model.pt')
-prediction_path = os.path.join(args.checkpoint, args.outf)
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+checkpoint_path = f'{checkpoint}{dataset}'
+if not os.path.exists(checkpoint_path):
+    os.makedirs(checkpoint_path)
+model_path = os.path.join(checkpoint, 'model.pt')
+prediction_path = os.path.join(checkpoint, outf)
 
 ###############################################################################
 # Load data
@@ -64,11 +64,11 @@ bos = '<bos>'
 eos = '<eos>'
 pad = '<pad>'
 tokenizer = GPT2Tokenizer.from_pretrained('gpt2', bos_token=bos, eos_token=eos, pad_token=pad)
-corpus = DataLoader(args.data_path, args.index_dir, tokenizer, args.words)
+corpus = DataLoader(data_path, index_dir, tokenizer, words)
 feature_set = corpus.feature_set
-train_data = Batchify(corpus.train, tokenizer, bos, eos, args.batch_size, shuffle=True)
-val_data = Batchify(corpus.valid, tokenizer, bos, eos, args.batch_size)
-test_data = Batchify(corpus.test, tokenizer, bos, eos, args.batch_size)
+train_data = Batchify(corpus.train, tokenizer, bos, eos, batch_size, shuffle=True)
+val_data = Batchify(corpus.valid, tokenizer, bos, eos, batch_size)
+test_data = Batchify(corpus.test, tokenizer, bos, eos, batch_size)
 
 ###############################################################################
 # Build the model
@@ -80,7 +80,7 @@ ntoken = len(tokenizer)
 model = ContinuousPromptLearning.from_pretrained('gpt2', nuser, nitem)
 model.resize_token_embeddings(ntoken)  # three tokens added, update embedding table
 model.to(device)
-optimizer = AdamW(model.parameters(), lr=args.lr)
+optimizer = AdamW(model.parameters(), lr=lr)
 
 
 ###############################################################################
@@ -111,7 +111,7 @@ def train(data):
         text_loss += batch_size * loss.item()
         total_sample += batch_size
 
-        if data.step % args.log_interval == 0 or data.step == data.total_step:
+        if data.step % log_interval == 0 or data.step == data.total_step:
             cur_t_loss = text_loss / total_sample
             print(now_time() + 'text ppl {:4.4f} | {:5d}/{:5d} batches'.format(math.exp(cur_t_loss), data.step,
                                                                                data.total_step))
@@ -175,7 +175,7 @@ print(now_time() + 'Tuning Prompt Only')
 # Loop over epochs.
 best_val_loss = float('inf')
 endure_count = 0
-for epoch in range(1, args.epochs + 1):
+for epoch in range(1, epochs + 1):
     print(now_time() + 'epoch {}'.format(epoch))
     train(train_data)
     val_loss = evaluate(val_data)
@@ -188,7 +188,7 @@ for epoch in range(1, args.epochs + 1):
     else:
         endure_count += 1
         print(now_time() + 'Endured {} time(s)'.format(endure_count))
-        if endure_count == args.endure_times:
+        if endure_count == endure_times:
             print(now_time() + 'Cannot endure it anymore | Exiting from early stop')
             break
 

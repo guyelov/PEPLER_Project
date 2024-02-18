@@ -1,11 +1,12 @@
-data_path: "/path/to/data"
-index_dir: "/path/to/index"
+data_path: "/content/drive/Shareddrives/recommendation-systems/Research Project/Code/data/TripAdvisor/reviews.pickle"
+index_dir: "/content/drive/Shareddrives/recommendation-systems/Research Project/Code/data/TripAdvisor/1"
 lr: 0.001
 epochs: 100
 batch_size: 128
 cuda: false
 log_interval: 200
-checkpoint: "./pepler/"
+checkpoint: "/content/"
 outf: "generated.txt"
 endure_times: 5
 words: 20
+dataset: "TripAdvisor"
