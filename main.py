@@ -10,7 +10,7 @@ from utils import rouge_score, bleu_score, DataLoader, Batchify, now_time, ids2t
 
 
 # Function to read configuration from YAML file
-def read_config(config_path):
+def read_config(config_path = "/content/drive/Shareddrives/recommendation-systems/Research Project/Code/config.yml"):
     with open(config_path, 'r') as file:
         return yaml.safe_load(file)
 
@@ -21,7 +21,7 @@ parser.add_argument('--config', type=str, required=True, help='path to configura
 args = parser.parse_args()
 
 # Read configuration from YAML file
-config = read_config(args.config)
+config = read_config()
 
 # Replace command line argument parsing with configuration from YAML
 data_path = config['data_path']
