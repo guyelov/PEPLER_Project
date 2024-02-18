@@ -10,7 +10,7 @@ from utils import rouge_score, bleu_score, DataLoader, Batchify, now_time, ids2t
 
 
 # Function to read configuration from YAML file
-def read_config(config_path = "config.yml"):
+def read_config(config_path = "/content/PEPLER_Project/config.yml"):
     with open(config_path, 'r') as file:
         return yaml.safe_load(file)
 
@@ -45,9 +45,6 @@ for arg in vars(args):
     print('{:40} {}'.format(arg, getattr(args, arg)))
 print('-' * 40 + 'ARGUMENTS' + '-' * 40)
 
-if torch.cuda.is_available():
-    if not args.cuda:
-        print(now_time() + 'WARNING: You have a CUDA device, so you should probably run with --cuda')
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 checkpoint_path = f'{checkpoint}{dataset}'
 if not os.path.exists(checkpoint_path):

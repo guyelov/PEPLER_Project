@@ -1,7 +1,7 @@
 data_path: "/content/drive/Shareddrives/recommendation-systems/Research Project/Code/data/TripAdvisor/reviews.pickle"
 index_dir: "/content/drive/Shareddrives/recommendation-systems/Research Project/Code/data/TripAdvisor/1"
 lr: 0.001
-epochs: 100
+epochs: 1
 batch_size: 128
 cuda: false
 log_interval: 200
