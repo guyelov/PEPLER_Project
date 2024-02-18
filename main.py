@@ -10,7 +10,7 @@ from utils import rouge_score, bleu_score, DataLoader, Batchify, now_time, ids2t
 
 
 # Function to read configuration from YAML file
-def read_config(config_path = "/content/drive/Shareddrives/recommendation-systems/Research Project/Code/config.yml"):
+def read_config(config_path = "config.yml"):
     with open(config_path, 'r') as file:
         return yaml.safe_load(file)
 
