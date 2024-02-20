@@ -125,6 +125,7 @@ def train(data):
         loss = outputs.loss
         loss.backward()
         optimizer.step()
+        run['train/loss'].log(loss.item())
 
         batch_size = user.size(0)
         text_loss += batch_size * loss.item()
