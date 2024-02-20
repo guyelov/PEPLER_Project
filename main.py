@@ -7,7 +7,7 @@ from transformers import GPT2Tokenizer, AdamW
 from module import ContinuousPromptLearning
 from utils import rouge_score, bleu_score, DataLoader, Batchify, now_time, ids2tokens, unique_sentence_percent, \
     feature_detect, feature_matching_ratio, feature_coverage_ratio, feature_diversity
-
+import neptune
 
 # Function to read configuration from YAML file
 def read_config(config_path = "/content/PEPLER_Project/config.yml"):
@@ -15,6 +15,8 @@ def read_config(config_path = "/content/PEPLER_Project/config.yml"):
         return yaml.safe_load(file)
 
 
+
+run.stop()
 # Parser for the path of the YAML configuration file
 parser = argparse.ArgumentParser(description='PErsonalized Prompt Learning for Explainable Recommendation (PEPLER)')
 args = parser.parse_args()
@@ -35,6 +37,9 @@ outf = config['outf']
 endure_times = config['endure_times']
 words = config['words']
 dataset = config['dataset']
+fold = config['fold']
+index_dir = f'{index_dir}{dataset}/{fold}/'
+data_path = f'{data_path}{dataset}/reviews.pickle'
 if config['data_path'] is None:
     raise ValueError('data_path should be provided for loading data in the YAML configuration file')
 if config['index_dir'] is None:
