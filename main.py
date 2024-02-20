@@ -70,7 +70,7 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 checkpoint_path = f'{checkpoint}{dataset}'
 if not os.path.exists(checkpoint_path):
     os.makedirs(checkpoint_path)
-model_path = os.path.join(checkpoint, 'model.pt')
+model_path = os.path.join(checkpoint, f'model_{dataset}_fold{fold}.pt')
 prediction_path = os.path.join(checkpoint, outf)
 
 ###############################################################################
@@ -243,7 +243,7 @@ for epoch in range(1, epochs + 1):
 # Load the best saved model.
 with open(model_path, 'rb') as f:
     model = torch.load(f).to(device)
-    run['best_model'].upload(model_path)
+    # run['best_model'].upload(model_path)
 
 # Run on test data.
 test_loss = evaluate(test_data)
