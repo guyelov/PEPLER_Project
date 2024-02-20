@@ -33,7 +33,6 @@ def read_config(config_path="/content/PEPLER_Project/config.yml"):
         return yaml.safe_load(file)
 
 
-run.stop()
 # Parser for the path of the YAML configuration file
 parser = argparse.ArgumentParser(description='PErsonalized Prompt Learning for Explainable Recommendation (PEPLER)')
 args = parser.parse_args()
