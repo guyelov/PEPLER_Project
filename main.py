@@ -9,11 +9,28 @@ from utils import rouge_score, bleu_score, DataLoader, Batchify, now_time, ids2t
     feature_detect, feature_matching_ratio, feature_coverage_ratio, feature_diversity
 import neptune
 
+
+def neptune_recoder(exp_name, tags, hyperparameters):
+    run = neptune.init_run(
+        project="guyelovbgu/PEPLER",
+        api_token="eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiIzMDZhZTVjNC0yMmQxLTQ1MDktODJmYS0zM2Q4YWQ3MDlmMTAifQ==",
+        name=exp_name,  # Optional,
+        capture_stderr=True,
+        capture_stdout=True,
+        capture_hardware_metrics=True,
+        capture_traceback=True,
+    )  # your credentials
+
+    run['hyper-parameters'] = hyperparameters
+    run["sys/tags"].add(tags)
+
+    return run
+
+
 # Function to read configuration from YAML file
-def read_config(config_path = "/content/PEPLER_Project/config.yml"):
+def read_config(config_path="/content/PEPLER_Project/config.yml"):
     with open(config_path, 'r') as file:
         return yaml.safe_load(file)
-
 
 
 run.stop()
@@ -44,7 +61,7 @@ if config['data_path'] is None:
     raise ValueError('data_path should be provided for loading data in the YAML configuration file')
 if config['index_dir'] is None:
     raise ValueError('index_dir should be provided for loading data splits in the YAML configuration file')
-
+run = neptune_recoder('PEPLER', ['Reproduce'], config)
 print('-' * 40 + 'ARGUMENTS' + '-' * 40)
 for arg in vars(args):
     print('{:40} {}'.format(arg, getattr(args, arg)))
@@ -226,6 +243,7 @@ for epoch in range(1, epochs + 1):
 # Load the best saved model.
 with open(model_path, 'rb') as f:
     model = torch.load(f).to(device)
+    run['best_model'].upload(model_path)
 
 # Run on test data.
 test_loss = evaluate(test_data)
@@ -259,3 +277,14 @@ for (real, fake) in zip(text_test, text_predict):
 with open(prediction_path, 'w', encoding='utf-8') as f:
     f.write(text_out)
 print(now_time() + 'Generated text saved to ({})'.format(prediction_path))
+run['BLEU1'] = BLEU1
+run['BLEU4'] = BLEU4
+run['USR'] = USR
+run['USN'] = USN
+run['DIV'] = DIV
+run['FCR'] = FCR
+run['FMR'] = FMR
+for (k, v) in ROUGE.items():
+    run[k] = v
+run['generated_text'].upload(prediction_path)
+run.stop()
