@@ -10,4 +10,5 @@ outf: "generated.txt"
 endure_times: 5
 words: 20
 dataset: "TripAdvisor"
+amazon_data_type: "MoviesAndTV"
 fold: 1
