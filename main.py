@@ -236,7 +236,7 @@ for epoch in range(1, epochs + 1):
     else:
         endure_count += 1
         print(now_time() + 'Endured {} time(s)'.format(endure_count))
-        if endure_count == args.endure_times:
+        if endure_count == endure_times:
             print(now_time() + 'Cannot endure it anymore | Exiting from early stop')
             break
 
