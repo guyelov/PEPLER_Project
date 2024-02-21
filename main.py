@@ -54,8 +54,13 @@ endure_times = config['endure_times']
 words = config['words']
 dataset = config['dataset']
 fold = config['fold']
-index_dir = f'{index_dir}{dataset}/{fold}/'
-data_path = f'{data_path}{dataset}/reviews.pickle'
+amazon_data = config['amazon_data_type']
+if dataset == 'Amazon':
+    index_dir = f'{index_dir}{dataset}/{amazon_data}/{fold}/'
+    data_path = f'{data_path}{dataset}/{amazon_data}/reviews.pickle'
+else:
+    index_dir = f'{index_dir}{dataset}/{fold}/'
+    data_path = f'{data_path}{dataset}/reviews.pickle'
 if config['data_path'] is None:
     raise ValueError('data_path should be provided for loading data in the YAML configuration file')
 if config['index_dir'] is None:
