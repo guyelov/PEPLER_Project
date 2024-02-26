@@ -1,14 +1,14 @@
-data_path: "/content/drive/Shareddrives/recommendation-systems/Research Project/Code/data/"
-index_dir: "/content/drive/Shareddrives/recommendation-systems/Research Project/Code/data/"
+data_path: "/sise/home/guyelov/PEPLER/data/"
+index_dir: "/sise/home/guyelov/PEPLER/data/"
 lr: 0.001
 epochs: 100
 batch_size: 128
 cuda: false
 log_interval: 200
-checkpoint: "/content/drive/Shareddrives/recommendation-systems/Research Project/Code/saved models/"
+checkpoint: "/sise/home/guyelov/PEPLER/saved models/"
 outf: "generated.txt"
 endure_times: 5
 words: 20
 dataset: "TripAdvisor"
 amazon_data_type: "MoviesAndTV"
-fold: 1
+fold: 4

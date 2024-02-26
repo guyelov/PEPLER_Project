@@ -28,7 +28,7 @@ def neptune_recoder(exp_name, tags, hyperparameters):
 
 
 # Function to read configuration from YAML file
-def read_config(config_path="/content/PEPLER_Project/config.yml"):
+def read_config(config_path="config.yml"):
     with open(config_path, 'r') as file:
         return yaml.safe_load(file)
 
@@ -65,7 +65,7 @@ if config['data_path'] is None:
     raise ValueError('data_path should be provided for loading data in the YAML configuration file')
 if config['index_dir'] is None:
     raise ValueError('index_dir should be provided for loading data splits in the YAML configuration file')
-run = neptune_recoder('PEPLER', ['Reproduce'], dict(config))
+run = neptune_recoder('PEPLER', ['Reproduce','GUY'], dict(config))
 print('-' * 40 + 'ARGUMENTS' + '-' * 40)
 for arg in vars(args):
     print('{:40} {}'.format(arg, getattr(args, arg)))
@@ -75,8 +75,8 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 checkpoint_path = f'{checkpoint}{dataset}'
 if not os.path.exists(checkpoint_path):
     os.makedirs(checkpoint_path)
-model_path = os.path.join(checkpoint, f'model_{dataset}_fold{fold}.pt')
-prediction_path = os.path.join(checkpoint, outf)
+model_path = os.path.join(checkpoint_path, f'model_{dataset}_fold{fold}.pt')
+prediction_path = os.path.join(checkpoint_path, outf)
 
 ###############################################################################
 # Load data
@@ -145,7 +145,7 @@ def train(data):
             break
 
 
-def evaluate(data):
+def evaluate(data,train_stage = 'prompt_tune'):
     # Turn on evaluation mode which disables dropout.
     model.eval()
     text_loss = 0.
@@ -159,6 +159,7 @@ def evaluate(data):
             mask = mask.to(device)
             outputs = model(user, item, seq, mask)
             loss = outputs.loss
+            run[f'{train_stage}_val/loss'].log(loss.item())
 
             batch_size = user.size(0)
             text_loss += batch_size * loss.item()
@@ -202,7 +203,7 @@ endure_count = 0
 for epoch in range(1, epochs + 1):
     print(now_time() + 'epoch {}'.format(epoch))
     train(train_data)
-    val_loss = evaluate(val_data)
+    val_loss = evaluate(val_data, 'prompt_tune')
     print(now_time() + 'text ppl {:4.4f} | valid loss {:4.4f} on validation'.format(math.exp(val_loss), val_loss))
     # Save the model if the validation loss is the best we've seen so far.
     if val_loss < best_val_loss:
@@ -231,7 +232,7 @@ endure_count = 0
 for epoch in range(1, epochs + 1):
     print(now_time() + 'epoch {}'.format(epoch))
     train(train_data)
-    val_loss = evaluate(val_data)
+    val_loss = evaluate(val_data, 'both_tune')
     print(now_time() + 'text ppl {:4.4f} | valid loss {:4.4f} on validation'.format(math.exp(val_loss), val_loss))
     # Save the model if the validation loss is the best we've seen so far.
     if val_loss < best_val_loss:
@@ -251,7 +252,7 @@ with open(model_path, 'rb') as f:
     # run['best_model'].upload(model_path)
 
 # Run on test data.
-test_loss = evaluate(test_data)
+test_loss = evaluate(test_data, 'test_both_tune')
 print('=' * 89)
 print(now_time() + 'text ppl {:4.4f} on test | End of training'.format(math.exp(test_loss)))
 print(now_time() + 'Generating text')
