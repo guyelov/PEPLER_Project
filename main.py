@@ -7,10 +7,28 @@ from transformers import GPT2Tokenizer, AdamW
 from module import ContinuousPromptLearning
 from utils import rouge_score, bleu_score, DataLoader, Batchify, now_time, ids2tokens, unique_sentence_percent, \
     feature_detect, feature_matching_ratio, feature_coverage_ratio, feature_diversity
+import neptune
+
+
+def neptune_recoder(exp_name, tags, hyperparameters):
+    run = neptune.init_run(
+        project="guyelovbgu/PEPLER",
+        api_token="eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiIzMDZhZTVjNC0yMmQxLTQ1MDktODJmYS0zM2Q4YWQ3MDlmMTAifQ==",
+        name=exp_name,  # Optional,
+        capture_stderr=True,
+        capture_stdout=True,
+        capture_hardware_metrics=True,
+        capture_traceback=True,
+    )  # your credentials
+
+    run['hyper-parameters'] = hyperparameters
+    run["sys/tags"].add(tags)
+
+    return run
 
 
 # Function to read configuration from YAML file
-def read_config(config_path = "/content/PEPLER_Project/config.yml"):
+def read_config(config_path="config.yml"):
     with open(config_path, 'r') as file:
         return yaml.safe_load(file)
 
@@ -35,11 +53,19 @@ outf = config['outf']
 endure_times = config['endure_times']
 words = config['words']
 dataset = config['dataset']
+fold = config['fold']
+amazon_data = config['amazon_data_type']
+if dataset == 'Amazon':
+    index_dir = f'{index_dir}{dataset}/{amazon_data}/{fold}/'
+    data_path = f'{data_path}{dataset}/{amazon_data}/reviews.pickle'
+else:
+    index_dir = f'{index_dir}{dataset}/{fold}/'
+    data_path = f'{data_path}{dataset}/reviews.pickle'
 if config['data_path'] is None:
     raise ValueError('data_path should be provided for loading data in the YAML configuration file')
 if config['index_dir'] is None:
     raise ValueError('index_dir should be provided for loading data splits in the YAML configuration file')
-
+run = neptune_recoder('PEPLER', ['Reproduce','GUY'], dict(config))
 print('-' * 40 + 'ARGUMENTS' + '-' * 40)
 for arg in vars(args):
     print('{:40} {}'.format(arg, getattr(args, arg)))
@@ -49,8 +75,8 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 checkpoint_path = f'{checkpoint}{dataset}'
 if not os.path.exists(checkpoint_path):
     os.makedirs(checkpoint_path)
-model_path = os.path.join(checkpoint, 'model.pt')
-prediction_path = os.path.join(checkpoint, outf)
+model_path = os.path.join(checkpoint_path, f'model_{dataset}_fold{fold}.pt')
+prediction_path = os.path.join(checkpoint_path, outf)
 
 ###############################################################################
 # Load data
@@ -103,6 +129,7 @@ def train(data):
         loss = outputs.loss
         loss.backward()
         optimizer.step()
+        run['train/loss'].log(loss.item())
 
         batch_size = user.size(0)
         text_loss += batch_size * loss.item()
@@ -118,7 +145,7 @@ def train(data):
             break
 
 
-def evaluate(data):
+def evaluate(data,train_stage = 'prompt_tune'):
     # Turn on evaluation mode which disables dropout.
     model.eval()
     text_loss = 0.
@@ -132,6 +159,7 @@ def evaluate(data):
             mask = mask.to(device)
             outputs = model(user, item, seq, mask)
             loss = outputs.loss
+            run[f'{train_stage}_val/loss'].log(loss.item())
 
             batch_size = user.size(0)
             text_loss += batch_size * loss.item()
@@ -175,7 +203,7 @@ endure_count = 0
 for epoch in range(1, epochs + 1):
     print(now_time() + 'epoch {}'.format(epoch))
     train(train_data)
-    val_loss = evaluate(val_data)
+    val_loss = evaluate(val_data, 'prompt_tune')
     print(now_time() + 'text ppl {:4.4f} | valid loss {:4.4f} on validation'.format(math.exp(val_loss), val_loss))
     # Save the model if the validation loss is the best we've seen so far.
     if val_loss < best_val_loss:
@@ -204,7 +232,7 @@ endure_count = 0
 for epoch in range(1, epochs + 1):
     print(now_time() + 'epoch {}'.format(epoch))
     train(train_data)
-    val_loss = evaluate(val_data)
+    val_loss = evaluate(val_data, 'both_tune')
     print(now_time() + 'text ppl {:4.4f} | valid loss {:4.4f} on validation'.format(math.exp(val_loss), val_loss))
     # Save the model if the validation loss is the best we've seen so far.
     if val_loss < best_val_loss:
@@ -214,16 +242,17 @@ for epoch in range(1, epochs + 1):
     else:
         endure_count += 1
         print(now_time() + 'Endured {} time(s)'.format(endure_count))
-        if endure_count == args.endure_times:
+        if endure_count == endure_times:
             print(now_time() + 'Cannot endure it anymore | Exiting from early stop')
             break
 
 # Load the best saved model.
 with open(model_path, 'rb') as f:
     model = torch.load(f).to(device)
+    # run['best_model'].upload(model_path)
 
 # Run on test data.
-test_loss = evaluate(test_data)
+test_loss = evaluate(test_data, 'test_both_tune')
 print('=' * 89)
 print(now_time() + 'text ppl {:4.4f} on test | End of training'.format(math.exp(test_loss)))
 print(now_time() + 'Generating text')
@@ -254,3 +283,14 @@ for (real, fake) in zip(text_test, text_predict):
 with open(prediction_path, 'w', encoding='utf-8') as f:
     f.write(text_out)
 print(now_time() + 'Generated text saved to ({})'.format(prediction_path))
+run['BLEU1'] = BLEU1
+run['BLEU4'] = BLEU4
+run['USR'] = USR
+run['USN'] = USN
+run['DIV'] = DIV
+run['FCR'] = FCR
+run['FMR'] = FMR
+for (k, v) in ROUGE.items():
+    run[k] = v
+run['generated_text'].upload(prediction_path)
+run.stop()
