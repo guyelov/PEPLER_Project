@@ -61,6 +61,7 @@ amazon_data = config['amazon_data_type']
 rating_reg = config['rating_reg']
 text_reg = config['text_reg']
 use_mf = config['use_mf']
+
 if dataset == 'Amazon':
     index_dir = f'{index_dir}{dataset}/{amazon_data}/{fold}/'
     data_path = f'{data_path}{dataset}/{amazon_data}/reviews.pickle'
@@ -71,7 +72,10 @@ if config['data_path'] is None:
     raise ValueError('data_path should be provided for loading data in the YAML configuration file')
 if config['index_dir'] is None:
     raise ValueError('index_dir should be provided for loading data splits in the YAML configuration file')
-run = neptune_recoder('PEPLER', ['Reproduce','GUY','Using Rating'], dict(config))
+if use_mf:
+    run = neptune_recoder('PEPLER', ['Reproduce','GUY','Using Rating and MF'], dict(config))
+else:
+    run = neptune_recoder('PEPLER', ['Reproduce','GUY','Using Rating and MLP'], dict(config))
 print('-' * 40 + 'ARGUMENTS' + '-' * 40)
 
 
@@ -80,7 +84,16 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 checkpoint_path = f'{checkpoint}{dataset}'
 if not os.path.exists(checkpoint_path):
     os.makedirs(checkpoint_path)
-model_path = os.path.join(checkpoint_path, f'model_{dataset}_fold{fold}.pt')
+if use_mf:
+    if dataset == 'Amazon':
+        model_path = os.path.join(checkpoint_path, f'model_with_fm_{dataset}_{amazon_data}_fold{fold}.pt')
+    else:
+        model_path = os.path.join(checkpoint_path, f'model_with_fm_{dataset}_fold{fold}.pt')
+else:
+    if dataset == 'Amazon':
+        model_path = os.path.join(checkpoint_path, f'model_with_mlp_{dataset}_{amazon_data}_fold{fold}.pt')
+    else:
+        model_path = os.path.join(checkpoint_path, f'model_with_mlp_{dataset}_fold{fold}.pt')
 prediction_path = os.path.join(checkpoint_path, outf)
 
 
@@ -261,7 +274,7 @@ MAE = mean_absolute_error(predicted_rating, corpus.max_rating, corpus.min_rating
 run['MAE'] = MAE
 run['RMSE'] = RMSE
 # Run on test data.
-test_loss = evaluate(test_data, 'test_both_tune')
+test_loss,_ = evaluate(test_data)
 print('=' * 89)
 print(now_time() + 'Generating text')
 tokens_test = [ids2tokens(ids[1:], tokenizer, eos) for ids in test_data.seq.tolist()]
