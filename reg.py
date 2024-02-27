@@ -61,7 +61,18 @@ amazon_data = config['amazon_data_type']
 rating_reg = config['rating_reg']
 text_reg = config['text_reg']
 use_mf = config['use_mf']
-
+# fold_list = [1, 2, 3, 4, 5]
+# use_mf_list = [True, False]
+# for fold in fold_list:
+#     config['fold'] = fold
+#     for use_mf in use_mf_list:
+#         config['use_mf'] = use_mf
+if not use_mf:
+    config['rating_reg'] = 1.0
+    rating_reg = 1.0
+else:
+    config['rating_reg'] = 0.01
+    rating_reg = 0.01
 if dataset == 'Amazon':
     index_dir = f'{index_dir}{dataset}/{amazon_data}/{fold}/'
     data_path = f'{data_path}{dataset}/{amazon_data}/reviews.pickle'
