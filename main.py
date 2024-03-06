@@ -250,7 +250,7 @@ def evaluate(data, train_stage='prompt_tune'):
     total_sample = 0
     with torch.no_grad():
         while True:
-            user, item, _, seq, mask = data.next_batch()  # data.step += 1
+            user, item, _, seq, mask,_,_ = data.next_batch()  # data.step += 1
             user = user.to(device)  # (batch_size,)
             item = item.to(device)
             seq = seq.to(device)  # (batch_size, seq_len)
@@ -274,7 +274,7 @@ def generate(data):
     idss_predict = []
     with torch.no_grad():
         while True:
-            user, item, _, seq, _ = data.next_batch()  # data.step += 1
+            user, item, _, seq, _ ,_,_= data.next_batch()  # data.step += 1
             user = user.to(device)  # (batch_size,)
             item = item.to(device)
             text = seq[:, :1].to(device)  # bos, (batch_size, 1)
