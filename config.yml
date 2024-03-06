@@ -10,7 +10,7 @@ outf: "generated.txt"
 endure_times: 5
 words: 20
 dataset: "Amazon"
-amazon_data_type: "ClothingShoesAndJewelry"
+amazon_data_type: "MoviesAndTV"
 fold: 5
 rating_reg: 0.01
 text_reg: 1.0

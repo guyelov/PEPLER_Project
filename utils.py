@@ -208,7 +208,7 @@ class DataLoader:
 
 
 class Batchify:
-    def __init__(self, data, tokenizer, bos, eos, batch_size=128, shuffle=False):
+    def __init__(self, data, tokenizer, bos, eos, batch_size=128, shuffle=False,selector_tokenizer = None):
         u, i, r, t, self.feature = [], [], [], [], []
         for x in data:
             u.append(x['user'])
@@ -218,8 +218,11 @@ class Batchify:
             self.feature.append(x['feature'])
 
         encoded_inputs = tokenizer(t, padding=True, return_tensors='pt')
+        encoded_inputs_selector = selector_tokenizer(t, padding=True, return_tensors='pt')
         self.seq = encoded_inputs['input_ids'].contiguous()
         self.mask = encoded_inputs['attention_mask'].contiguous()
+        self.seq_selector = encoded_inputs_selector['input_ids'].contiguous()
+        self.mask_selector = encoded_inputs_selector['attention_mask'].contiguous()
         self.user = torch.tensor(u, dtype=torch.int64).contiguous()
         self.item = torch.tensor(i, dtype=torch.int64).contiguous()
         self.rating = torch.tensor(r, dtype=torch.float).contiguous()
@@ -245,7 +248,10 @@ class Batchify:
         rating = self.rating[index]
         seq = self.seq[index]  # (batch_size, seq_len)
         mask = self.mask[index]
-        return user, item, rating, seq, mask
+        seq_selector = self.seq_selector[index]
+        mask_selector = self.mask_selector[index]
+        return user, item, rating, seq, mask ,seq_selector,mask_selector
+
 
 
 class Batchify2:

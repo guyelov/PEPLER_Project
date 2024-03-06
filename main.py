@@ -3,7 +3,7 @@ import math
 import torch
 import argparse
 import yaml
-from transformers import GPT2Tokenizer, AdamW
+from transformers import GPT2Tokenizer, AdamW, BertTokenizer, BertModel
 from module import ContinuousPromptLearning
 from utils import rouge_score, bleu_score, DataLoader, Batchify, now_time, ids2tokens, unique_sentence_percent, \
     feature_detect, feature_matching_ratio, feature_coverage_ratio, feature_diversity
@@ -65,13 +65,14 @@ if config['data_path'] is None:
     raise ValueError('data_path should be provided for loading data in the YAML configuration file')
 if config['index_dir'] is None:
     raise ValueError('index_dir should be provided for loading data splits in the YAML configuration file')
-run = neptune_recoder('PEPLER', ['Reproduce','GUY'], dict(config))
+# run = neptune_recoder('PEPLER', ['Reproduce','GUY'], dict(config))
 print('-' * 40 + 'ARGUMENTS' + '-' * 40)
 for arg in vars(args):
     print('{:40} {}'.format(arg, getattr(args, arg)))
 print('-' * 40 + 'ARGUMENTS' + '-' * 40)
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print('Using device:', device)
 checkpoint_path = f'{checkpoint}{dataset}'
 if not os.path.exists(checkpoint_path):
     os.makedirs(checkpoint_path)
@@ -87,11 +88,18 @@ bos = '<bos>'
 eos = '<eos>'
 pad = '<pad>'
 tokenizer = GPT2Tokenizer.from_pretrained('gpt2', bos_token=bos, eos_token=eos, pad_token=pad)
+selector_tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+bert_model = BertModel.from_pretrained('bert-base-uncased')
+bert_model.to(device)
+head = torch.nn.Linear(768, 1)
+head.to(device)
+head_mse_loss = torch.nn.MSELoss()
 corpus = DataLoader(data_path, index_dir, tokenizer, words)
 feature_set = corpus.feature_set
-train_data = Batchify(corpus.train, tokenizer, bos, eos, batch_size, shuffle=True)
-val_data = Batchify(corpus.valid, tokenizer, bos, eos, batch_size)
-test_data = Batchify(corpus.test, tokenizer, bos, eos, batch_size)
+train_data = Batchify(corpus.train[:500], tokenizer, bos, eos, batch_size, shuffle=True,
+                      selector_tokenizer=selector_tokenizer)
+val_data = Batchify(corpus.valid[:10], tokenizer, bos, eos, batch_size, selector_tokenizer=selector_tokenizer)
+test_data = Batchify(corpus.test[:10], tokenizer, bos, eos, batch_size, selector_tokenizer=selector_tokenizer)
 
 ###############################################################################
 # Build the model
@@ -109,43 +117,131 @@ optimizer = AdamW(model.parameters(), lr=lr)
 ###############################################################################
 # Training code
 ###############################################################################
+def get_cls_embedding(input_ids, attention_mask):
+    outputs = bert_model(input_ids, attention_mask)
+    cls_embedding = outputs.last_hidden_state[:, 0, :]
+    head_output = head(cls_embedding)
+    return head_output
+
+
+def create_selector_labels(seq, mask, seq_len, model, user, item):
+    with torch.no_grad():
+        sub_seq = seq[:, :seq_len]
+        sub_mask = mask[:, :seq_len]
+        subset_loss_list = []
+        context_loss_list = []
+        for i in range(sub_seq.size(0)):
+            user_i = user[i].unsqueeze(0)  # Ensure user tensor is at least 1D
+            item_i = item[i].unsqueeze(0)  # Same for item tensor
+            sub_seq_i = sub_seq[i].unsqueeze(0)
+            sub_mask_i = sub_mask[i].unsqueeze(0)
+
+            subset_loss = model(user_i, item_i, sub_seq_i, sub_mask_i).loss
+            context_loss = model(user_i, item_i, seq[i].unsqueeze(0), mask[i].unsqueeze(0)).loss
+
+            subset_loss_list.append(subset_loss)
+            context_loss_list.append(context_loss)
+
+        ratio_loss = torch.tensor(subset_loss_list) / torch.tensor(context_loss_list)
+        return ratio_loss
+
+
+
+def modify_loss(selector_output, seq, mask, model, user, item):
+    model_loss = []
+    for i in range(seq.size(0)):
+        user_i = user[i].unsqueeze(0)
+        item_i = item[i].unsqueeze(0)
+        seq_i = seq[i].unsqueeze(0)
+        mask_i = mask[i].unsqueeze(0)
+        model_loss.append(model(user_i, item_i, seq_i, mask_i).loss)
+    model_loss = torch.tensor(model_loss, device=device)
+    selector_output = 1 - selector_output
+    selector_output = selector_output.to(device)
+    modified_loss = model_loss * selector_output
+    return modified_loss.mean()
 
 
 def train(data):
     # Turn on training mode which enables dropout.
-    model.train()
     text_loss = 0.
     total_sample = 0
+    train_steps_selector = 0
+
     while True:
-        user, item, _, seq, mask = data.next_batch()  # data.step += 1
-        user = user.to(device)  # (batch_size,)
-        item = item.to(device)
-        seq = seq.to(device)  # (batch_size, seq_len)
-        mask = mask.to(device)
-        # Starting each batch, we detach the hidden state from how it was previously produced.
-        # If we didn't, the model would try backpropagating all the way to start of the dataset.
-        optimizer.zero_grad()
-        outputs = model(user, item, seq, mask)
-        loss = outputs.loss
-        loss.backward()
-        optimizer.step()
-        run['train/loss'].log(loss.item())
+        if train_steps_selector < 2:
+            model.eval()
+            bert_model.train()
+            head.train()
+            user, item, _, seq, mask, selector_seq, selector_mask = data.next_batch()
+            # print(user.shape)
+            # print(item.shape)
+            # print(seq.shape)
+            # print(mask.shape)
+            selector_seq = selector_seq.to(device)
+            selector_mask = selector_mask.to(device)
+            seq = seq.to(device)
+            mask = mask.to(device)
+            user = user.to(device)
+            item = item.to(device)
+            selector_embedding = get_cls_embedding(selector_seq, selector_mask)
+            del selector_seq, selector_mask
+            selector_seq, selector_mask = None, None
+            selector_embedding = selector_embedding.to(device)
+            labels = create_selector_labels(seq, mask, 5, model, user, item)
+            labels = labels.to(device)
+            selector_embedding = selector_embedding.squeeze(1)
+            selector_loss = head_mse_loss(selector_embedding, labels)
+            optimizer.zero_grad()
+            selector_loss.backward()
+            optimizer.step()
+            # run['train/selector_loss'].log(selector_loss.item())
+            train_steps_selector += 1
+            if train_steps_selector == 2:
+                print('selector training finished')
+        else:
+            model.train()
+            bert_model.eval()
+            head.eval()
+            user, item, _, seq, mask, selector_seq, selector_mask = data.next_batch()
+            user = user.to(device)  # (batch_size,)
+            item = item.to(device)
+            seq = seq.to(device)  # (batch_size, seq_len)
+            mask = mask.to(device)
+            selector_seq = selector_seq.to(device)
+            selector_mask = selector_mask.to(device)
+            selector_output = torch.sigmoid(get_cls_embedding(selector_seq, selector_mask))
+            selector_output = selector_output.to(device)
+            print(selector_seq.shape)
+            print(selector_mask.shape)
+            print(seq.shape)
 
-        batch_size = user.size(0)
-        text_loss += batch_size * loss.item()
-        total_sample += batch_size
+            # data.step += 1
 
-        if data.step % log_interval == 0 or data.step == data.total_step:
-            cur_t_loss = text_loss / total_sample
-            print(now_time() + 'text ppl {:4.4f} | {:5d}/{:5d} batches'.format(math.exp(cur_t_loss), data.step,
-                                                                               data.total_step))
-            text_loss = 0.
-            total_sample = 0
-        if data.step == data.total_step:
-            break
+            # Starting each batch, we detach the hidden state from how it was previously produced.
+            # If we didn't, the model would try backpropagating all the way to start of the dataset.
+            optimizer.zero_grad()
+            # outputs = model(user, item, seq, mask)
+            loss = modify_loss(selector_output, seq, mask, model, user, item)
+            loss.backward()
+            optimizer.step()
+            run['train/loss'].log(loss.item())
+
+            batch_size = user.size(0)
+            text_loss += batch_size * loss.item()
+            total_sample += batch_size
+
+            if data.step % log_interval == 0 or data.step == data.total_step:
+                cur_t_loss = text_loss / total_sample
+                print(now_time() + 'text ppl {:4.4f} | {:5d}/{:5d} batches'.format(math.exp(cur_t_loss), data.step,
+                                                                                   data.total_step))
+                text_loss = 0.
+                total_sample = 0
+            if data.step == data.total_step:
+                break
 
 
-def evaluate(data,train_stage = 'prompt_tune'):
+def evaluate(data, train_stage='prompt_tune'):
     # Turn on evaluation mode which disables dropout.
     model.eval()
     text_loss = 0.
