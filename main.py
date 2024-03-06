@@ -96,10 +96,10 @@ head.to(device)
 head_mse_loss = torch.nn.MSELoss()
 corpus = DataLoader(data_path, index_dir, tokenizer, words)
 feature_set = corpus.feature_set
-train_data = Batchify(corpus.train[:500], tokenizer, bos, eos, batch_size, shuffle=True,
+train_data = Batchify(corpus.train, tokenizer, bos, eos, batch_size, shuffle=True,
                       selector_tokenizer=selector_tokenizer)
-val_data = Batchify(corpus.valid[:10], tokenizer, bos, eos, batch_size, selector_tokenizer=selector_tokenizer)
-test_data = Batchify(corpus.test[:10], tokenizer, bos, eos, batch_size, selector_tokenizer=selector_tokenizer)
+val_data = Batchify(corpus.valid, tokenizer, bos, eos, batch_size, selector_tokenizer=selector_tokenizer)
+test_data = Batchify(corpus.test, tokenizer, bos, eos, batch_size, selector_tokenizer=selector_tokenizer)
 
 ###############################################################################
 # Build the model
