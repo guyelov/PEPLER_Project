@@ -65,7 +65,7 @@ if config['data_path'] is None:
     raise ValueError('data_path should be provided for loading data in the YAML configuration file')
 if config['index_dir'] is None:
     raise ValueError('index_dir should be provided for loading data splits in the YAML configuration file')
-# run = neptune_recoder('PEPLER', ['Reproduce','GUY'], dict(config))
+run = neptune_recoder('PEPLER', ['Selector','GUY'], dict(config))
 print('-' * 40 + 'ARGUMENTS' + '-' * 40)
 for arg in vars(args):
     print('{:40} {}'.format(arg, getattr(args, arg)))
@@ -166,10 +166,12 @@ def train(data):
     # Turn on training mode which enables dropout.
     text_loss = 0.
     total_sample = 0
-    train_steps_selector = 0
+    train_steps_selector = 500
+    run['num_train_steps_selector'] = train_steps_selector
+    steps = 0
 
     while True:
-        if train_steps_selector < 2:
+        if steps < train_steps_selector:
             model.eval()
             bert_model.train()
             head.train()
@@ -196,8 +198,8 @@ def train(data):
             selector_loss.backward()
             optimizer.step()
             # run['train/selector_loss'].log(selector_loss.item())
-            train_steps_selector += 1
-            if train_steps_selector == 2:
+            steps += 1
+            if steps == train_steps_selector:
                 print('selector training finished')
         else:
             model.train()
@@ -212,9 +214,6 @@ def train(data):
             selector_mask = selector_mask.to(device)
             selector_output = torch.sigmoid(get_cls_embedding(selector_seq, selector_mask))
             selector_output = selector_output.to(device)
-            print(selector_seq.shape)
-            print(selector_mask.shape)
-            print(seq.shape)
 
             # data.step += 1
 
