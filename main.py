@@ -142,7 +142,7 @@ def create_selector_labels(seq, mask, seq_len, model, user, item):
             subset_loss_list.append(subset_loss)
             context_loss_list.append(context_loss)
 
-        ratio_loss = torch.tensor(subset_loss_list) / torch.tensor(context_loss_list)
+        ratio_loss = torch.tensor(context_loss_list) / torch.tensor(subset_loss_list)
         return ratio_loss
 
 
@@ -167,7 +167,9 @@ def train(data):
     text_loss = 0.
     total_sample = 0
     train_steps_selector = 500
+    sequence_length = 15
     run['num_train_steps_selector'] = train_steps_selector
+    run['sequence_length'] = sequence_length
     steps = 0
 
     while True:
@@ -189,6 +191,7 @@ def train(data):
             selector_embedding = get_cls_embedding(selector_seq, selector_mask)
             del selector_seq, selector_mask
             selector_seq, selector_mask = None, None
+            selector_embedding = torch.sigmoid(selector_embedding)
             selector_embedding = selector_embedding.to(device)
             labels = create_selector_labels(seq, mask, 5, model, user, item)
             labels = labels.to(device)
@@ -197,7 +200,7 @@ def train(data):
             optimizer.zero_grad()
             selector_loss.backward()
             optimizer.step()
-            # run['train/selector_loss'].log(selector_loss.item())
+            run['train/selector_loss'].log(selector_loss.item())
             steps += 1
             if steps == train_steps_selector:
                 print('selector training finished')

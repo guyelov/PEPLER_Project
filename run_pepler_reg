@@ -11,7 +11,7 @@
 #SBATCH --output /sise/home/guyelov/PEPLER/outputs/PEPLER-%J.out
 #SBATCH --mail-user=guyelov@post.bgu.ac.il		### user email for sending job status
 #SBATCH --mail-type=END			### conditions when to send the email. ALL,BEGIN,END,FAIL, REQUEU, NONE
-#SBATCH --gpus=rtx_2080:1	### number of GPUs, ask for more than 1 only if you can parallelize your code for multi GPU
+#SBATCH --gpus=rtx_3090:1	### number of GPUs, ask for more than 1 only if you can parallelize your code for multi GPU
 #SBATCH --mem=24G
 ### Print some data to output file ###
 echo `date`

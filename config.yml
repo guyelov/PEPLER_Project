@@ -11,7 +11,7 @@ endure_times: 5
 words: 20
 dataset: "Amazon"
 amazon_data_type: "MoviesAndTV"
-fold: 5
+fold: 1
 rating_reg: 0.01
 text_reg: 1.0
 use_mf: True
