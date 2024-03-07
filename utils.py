@@ -136,7 +136,7 @@ class EntityDictionary:
 
 
 class DataLoader:
-    def __init__(self, data_path, index_dir, tokenizer, seq_len):
+    def __init__(self, data_path, index_dir, tokenizer, seq_len, selector_tokenizer = None):
         self.user_dict = EntityDictionary()
         self.item_dict = EntityDictionary()
         self.max_rating = float('-inf')
@@ -144,6 +144,7 @@ class DataLoader:
         self.initialize(data_path)
         self.feature_set = set()
         self.tokenizer = tokenizer
+        self.selector_tokenizer = selector_tokenizer
         self.seq_len = seq_len
         self.train, self.valid, self.test, self.user2feature, self.item2feature = self.load_data(data_path, index_dir)
 
@@ -165,12 +166,18 @@ class DataLoader:
         for review in reviews:
             (fea, adj, tem, sco) = review['template']
             tokens = self.tokenizer(tem)['input_ids']
+            if self.selector_tokenizer is not None:
+                tokens_selector = self.selector_tokenizer(tem)['input_ids']
+                text_selector = self.selector_tokenizer.decode(tokens_selector[:self.seq_len])
+            else:
+                text_selector = None
             text = self.tokenizer.decode(tokens[:self.seq_len])  # keep seq_len tokens at most
             data.append({'user': self.user_dict.entity2idx[review['user']],
                          'item': self.item_dict.entity2idx[review['item']],
                          'rating': review['rating'],
                          'text': text,
-                         'feature': fea})
+                         'feature': fea,
+                         'text_selector': text_selector })
             self.feature_set.add(fea)
 
         train_index, valid_index, test_index = self.load_index(index_dir)
@@ -209,16 +216,18 @@ class DataLoader:
 
 class Batchify:
     def __init__(self, data, tokenizer, bos, eos, batch_size=128, shuffle=False,selector_tokenizer = None):
-        u, i, r, t, self.feature = [], [], [], [], []
+        u, i, r, t, self.feature,t_selector = [], [], [], [], [],[]
         for x in data:
             u.append(x['user'])
             i.append(x['item'])
             r.append(x['rating'])
             t.append('{} {} {}'.format(bos, x['text'], eos))
+            if selector_tokenizer is not None:
+                t_selector.append(x['text_selector'])
             self.feature.append(x['feature'])
 
         encoded_inputs = tokenizer(t, padding=True, return_tensors='pt')
-        encoded_inputs_selector = selector_tokenizer(t, padding=True, return_tensors='pt')
+        encoded_inputs_selector = selector_tokenizer(t_selector, padding=True, return_tensors='pt')
         self.seq = encoded_inputs['input_ids'].contiguous()
         self.mask = encoded_inputs['attention_mask'].contiguous()
         self.seq_selector = encoded_inputs_selector['input_ids'].contiguous()

@@ -65,7 +65,7 @@ if config['data_path'] is None:
     raise ValueError('data_path should be provided for loading data in the YAML configuration file')
 if config['index_dir'] is None:
     raise ValueError('index_dir should be provided for loading data splits in the YAML configuration file')
-run = neptune_recoder('PEPLER', ['Selector','GUY'], dict(config))
+run = neptune_recoder('PEPLER', ['Selector', 'GUY', 'FIXED?','fixed optim'], dict(config))
 print('-' * 40 + 'ARGUMENTS' + '-' * 40)
 for arg in vars(args):
     print('{:40} {}'.format(arg, getattr(args, arg)))
@@ -88,13 +88,15 @@ bos = '<bos>'
 eos = '<eos>'
 pad = '<pad>'
 tokenizer = GPT2Tokenizer.from_pretrained('gpt2', bos_token=bos, eos_token=eos, pad_token=pad)
-selector_tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+selector_tokenizer = BertTokenizer.from_pretrained('bert-base-uncased', pad_token=pad)
+selector_tokenizer.add_special_tokens({'additional_special_tokens': [bos, eos]})
 bert_model = BertModel.from_pretrained('bert-base-uncased')
+bert_model.resize_token_embeddings(len(selector_tokenizer))
 bert_model.to(device)
 head = torch.nn.Linear(768, 1)
 head.to(device)
 head_mse_loss = torch.nn.MSELoss()
-corpus = DataLoader(data_path, index_dir, tokenizer, words)
+corpus = DataLoader(data_path, index_dir, tokenizer, words, selector_tokenizer=selector_tokenizer)
 feature_set = corpus.feature_set
 train_data = Batchify(corpus.train, tokenizer, bos, eos, batch_size, shuffle=True,
                       selector_tokenizer=selector_tokenizer)
@@ -111,7 +113,8 @@ ntoken = len(tokenizer)
 model = ContinuousPromptLearning.from_pretrained('gpt2', nuser, nitem)
 model.resize_token_embeddings(ntoken)  # three tokens added, update embedding table
 model.to(device)
-optimizer = AdamW(model.parameters(), lr=lr)
+# optimizer = AdamW(model.parameters(), lr=lr)
+optimizer = AdamW(list(model.parameters()) + list(bert_model.parameters()) + list(head.parameters()), lr=lr)
 
 
 ###############################################################################
@@ -128,6 +131,8 @@ def create_selector_labels(seq, mask, seq_len, model, user, item):
     with torch.no_grad():
         sub_seq = seq[:, :seq_len]
         sub_mask = mask[:, :seq_len]
+        # print(sub_seq.shape)
+        # print(sub_mask.shape)
         subset_loss_list = []
         context_loss_list = []
         for i in range(sub_seq.size(0)):
@@ -135,6 +140,8 @@ def create_selector_labels(seq, mask, seq_len, model, user, item):
             item_i = item[i].unsqueeze(0)  # Same for item tensor
             sub_seq_i = sub_seq[i].unsqueeze(0)
             sub_mask_i = sub_mask[i].unsqueeze(0)
+            # print(f'sub_seq_i: {sub_seq_i.shape}')
+            # print(f'sub_mask_i: {sub_mask_i.shape}')
 
             subset_loss = model(user_i, item_i, sub_seq_i, sub_mask_i).loss
             context_loss = model(user_i, item_i, seq[i].unsqueeze(0), mask[i].unsqueeze(0)).loss
@@ -143,8 +150,8 @@ def create_selector_labels(seq, mask, seq_len, model, user, item):
             context_loss_list.append(context_loss)
 
         ratio_loss = torch.tensor(context_loss_list) / torch.tensor(subset_loss_list)
-        return ratio_loss
-
+        ratio_loss_normalized = (ratio_loss - ratio_loss.min()) / (ratio_loss.max() - ratio_loss.min())
+        return ratio_loss_normalized
 
 
 def modify_loss(selector_output, seq, mask, model, user, item):
@@ -164,6 +171,39 @@ def modify_loss(selector_output, seq, mask, model, user, item):
 
 def train(data):
     # Turn on training mode which enables dropout.
+    model.train()
+    text_loss = 0.
+    total_sample = 0
+    while True:
+        user, item, _, seq, mask,_,_ = data.next_batch()  # data.step += 1
+        user = user.to(device)  # (batch_size,)
+        item = item.to(device)
+        seq = seq.to(device)  # (batch_size, seq_len)
+        mask = mask.to(device)
+        # Starting each batch, we detach the hidden state from how it was previously produced.
+        # If we didn't, the model would try backpropagating all the way to start of the dataset.
+        optimizer.zero_grad()
+        outputs = model(user, item, seq, mask)
+        loss = outputs.loss
+        loss.backward()
+        optimizer.step()
+        run['train/loss'].log(loss.item())
+
+        batch_size = user.size(0)
+        text_loss += batch_size * loss.item()
+        total_sample += batch_size
+
+        if data.step % log_interval == 0 or data.step == data.total_step:
+            cur_t_loss = text_loss / total_sample
+            print(now_time() + 'text ppl {:4.4f} | {:5d}/{:5d} batches'.format(math.exp(cur_t_loss), data.step,
+                                                                               data.total_step))
+            text_loss = 0.
+            total_sample = 0
+        if data.step == data.total_step:
+            break
+
+def train_with_selector(data, train_selector=True):
+    # Turn on training mode which enables dropout.
     text_loss = 0.
     total_sample = 0
     train_steps_selector = 500
@@ -173,7 +213,7 @@ def train(data):
     steps = 0
 
     while True:
-        if steps < train_steps_selector:
+        if steps < train_steps_selector and train_selector:
             model.eval()
             bert_model.train()
             head.train()
@@ -191,9 +231,9 @@ def train(data):
             selector_embedding = get_cls_embedding(selector_seq, selector_mask)
             del selector_seq, selector_mask
             selector_seq, selector_mask = None, None
-            selector_embedding = torch.sigmoid(selector_embedding)
+            # selector_embedding = torch.sigmoid(selector_embedding)
             selector_embedding = selector_embedding.to(device)
-            labels = create_selector_labels(seq, mask, 5, model, user, item)
+            labels = create_selector_labels(seq, mask, sequence_length, model, user, item)
             labels = labels.to(device)
             selector_embedding = selector_embedding.squeeze(1)
             selector_loss = head_mse_loss(selector_embedding, labels)
@@ -204,6 +244,7 @@ def train(data):
             steps += 1
             if steps == train_steps_selector:
                 print('selector training finished')
+                train_selector = False
         else:
             model.train()
             bert_model.eval()
@@ -250,7 +291,7 @@ def evaluate(data, train_stage='prompt_tune'):
     total_sample = 0
     with torch.no_grad():
         while True:
-            user, item, _, seq, mask,_,_ = data.next_batch()  # data.step += 1
+            user, item, _, seq, mask, _, _ = data.next_batch()  # data.step += 1
             user = user.to(device)  # (batch_size,)
             item = item.to(device)
             seq = seq.to(device)  # (batch_size, seq_len)
@@ -274,7 +315,7 @@ def generate(data):
     idss_predict = []
     with torch.no_grad():
         while True:
-            user, item, _, seq, _ ,_,_= data.next_batch()  # data.step += 1
+            user, item, _, seq, _, _, _ = data.next_batch()  # data.step += 1
             user = user.to(device)  # (batch_size,)
             item = item.to(device)
             text = seq[:, :1].to(device)  # bos, (batch_size, 1)
@@ -298,9 +339,11 @@ print(now_time() + 'Tuning Prompt Only')
 # Loop over epochs.
 best_val_loss = float('inf')
 endure_count = 0
+train_selector = True
 for epoch in range(1, epochs + 1):
     print(now_time() + 'epoch {}'.format(epoch))
     train(train_data)
+    train_selector = False
     val_loss = evaluate(val_data, 'prompt_tune')
     print(now_time() + 'text ppl {:4.4f} | valid loss {:4.4f} on validation'.format(math.exp(val_loss), val_loss))
     # Save the model if the validation loss is the best we've seen so far.
@@ -327,9 +370,11 @@ optimizer = AdamW(model.parameters(), lr=lr)
 # Loop over epochs.
 best_val_loss = float('inf')
 endure_count = 0
+train_selector = True
 for epoch in range(1, epochs + 1):
     print(now_time() + 'epoch {}'.format(epoch))
-    train(train_data)
+    train_with_selector(train_data, train_selector)
+    train_selector = False
     val_loss = evaluate(val_data, 'both_tune')
     print(now_time() + 'text ppl {:4.4f} | valid loss {:4.4f} on validation'.format(math.exp(val_loss), val_loss))
     # Save the model if the validation loss is the best we've seen so far.

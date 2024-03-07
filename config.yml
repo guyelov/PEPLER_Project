@@ -9,7 +9,7 @@ checkpoint: "/sise/home/guyelov/PEPLER/saved models/"
 outf: "generated.txt"
 endure_times: 5
 words: 20
-dataset: "Amazon"
+dataset: "TripAdvisor"
 amazon_data_type: "MoviesAndTV"
 fold: 1
 rating_reg: 0.01
