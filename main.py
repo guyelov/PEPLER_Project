@@ -8,7 +8,7 @@ from module import ContinuousPromptLearning
 from utils import rouge_score, bleu_score, DataLoader, Batchify, now_time, ids2tokens, unique_sentence_percent, \
     feature_detect, feature_matching_ratio, feature_coverage_ratio, feature_diversity
 import neptune
-
+import pytorch_lightning as pl
 
 def neptune_recoder(exp_name, tags, hyperparameters):
     run = neptune.init_run(
@@ -26,7 +26,10 @@ def neptune_recoder(exp_name, tags, hyperparameters):
 
     return run
 
-
+pl.seed_everything(42)
+torch.manual_seed(42)
+torch.cuda.manual_seed(42)
+torch.cuda.manual_seed_all(42)
 # Function to read configuration from YAML file
 def read_config(config_path="config.yml"):
     with open(config_path, 'r') as file:
