@@ -20,7 +20,7 @@ echo -e "SLURM_JOB_NODELIST:\t" $SLURM_JOB_NODELIST "\n"
 
 ### Start you code below ####
 module load anaconda				### load anaconda module (must present when working with conda environments)
-source activate updated_toshiba				### activating environment, environment must be configured before running the job
+source activate big_data_env				### activating environment, environment must be configured before running the job
 ### srun --mem=24G jupyter lab			### execute jupyter lab command – replace with your own command
 srun python -u "/sise/home/guyelov/PEPLER/main.py"				### (e.g. “srun --mem=24G python my.py my_arg”.
 						### You may use multiple srun lines, they are the job steps.
