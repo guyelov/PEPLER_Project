@@ -4,7 +4,7 @@ import torch
 import argparse
 import yaml
 import torch.nn as nn
-from transformers import GPT2Tokenizer, AdamW
+from transformers import GPT2Tokenizer, AdamW, BertTokenizer, BertModel
 from module import RecReg
 from utils import rouge_score, bleu_score, DataLoader, Batchify, now_time, ids2tokens, unique_sentence_percent, \
     root_mean_square_error, mean_absolute_error, feature_detect, feature_matching_ratio, feature_coverage_ratio, feature_diversity
@@ -84,7 +84,7 @@ if config['data_path'] is None:
 if config['index_dir'] is None:
     raise ValueError('index_dir should be provided for loading data splits in the YAML configuration file')
 if use_mf:
-    run = neptune_recoder('PEPLER', ['Reproduce','GUY','Using Rating and MF'], dict(config))
+    run = neptune_recoder('PEPLER', ['With_Selector','GUY','Using Rating and MF'], dict(config))
 else:
     run = neptune_recoder('PEPLER', ['Reproduce','GUY','Using Rating and MLP'], dict(config))
 print('-' * 40 + 'ARGUMENTS' + '-' * 40)
@@ -111,18 +111,25 @@ prediction_path = os.path.join(checkpoint_path, outf)
 ###############################################################################
 # Load data
 ###############################################################################
-
 print(now_time() + 'Loading data')
 bos = '<bos>'
 eos = '<eos>'
 pad = '<pad>'
 tokenizer = GPT2Tokenizer.from_pretrained('gpt2', bos_token=bos, eos_token=eos, pad_token=pad)
-corpus = DataLoader(data_path, index_dir, tokenizer, words)
+selector_tokenizer = BertTokenizer.from_pretrained('bert-base-uncased', pad_token=pad)
+selector_tokenizer.add_special_tokens({'additional_special_tokens': [bos, eos]})
+bert_model = BertModel.from_pretrained('bert-base-uncased')
+bert_model.resize_token_embeddings(len(selector_tokenizer))
+bert_model.to(device)
+head = torch.nn.Linear(768, 1)
+head.to(device)
+head_mse_loss = torch.nn.MSELoss()
+corpus = DataLoader(data_path, index_dir, tokenizer, words, selector_tokenizer=selector_tokenizer)
 feature_set = corpus.feature_set
-train_data = Batchify(corpus.train, tokenizer, bos, eos, batch_size, shuffle=True)
-val_data = Batchify(corpus.valid, tokenizer, bos, eos, batch_size)
-test_data = Batchify(corpus.test, tokenizer, bos, eos, batch_size)
-
+train_data = Batchify(corpus.train, tokenizer, bos, eos, batch_size, shuffle=True,
+                      selector_tokenizer=selector_tokenizer)
+val_data = Batchify(corpus.valid, tokenizer, bos, eos, batch_size, selector_tokenizer=selector_tokenizer)
+test_data = Batchify(corpus.test, tokenizer, bos, eos, batch_size, selector_tokenizer=selector_tokenizer)
 
 ###############################################################################
 # Build the model
@@ -134,12 +141,60 @@ ntoken = len(tokenizer)
 model = RecReg.from_pretrained('gpt2', nuser, nitem, use_mf)
 model.resize_token_embeddings(ntoken)  # three tokens added, update embedding table
 model.to(device)
-optimizer = AdamW(model.parameters(), lr=lr)
+optimizer = AdamW(list(model.parameters()) + list(bert_model.parameters()) + list(head.parameters()), lr=lr)
 rating_criterion = nn.MSELoss()
 
 ###############################################################################
 # Training code
 ###############################################################################
+def get_cls_embedding(input_ids, attention_mask):
+    outputs = bert_model(input_ids, attention_mask)
+    cls_embedding = outputs.last_hidden_state[:, 0, :]
+    head_output = head(cls_embedding)
+    return head_output
+
+
+def create_selector_labels(seq, mask, seq_len, model, user, item):
+    with torch.no_grad():
+        sub_seq = seq[:, :seq_len]
+        sub_mask = mask[:, :seq_len]
+        # print(sub_seq.shape)
+        # print(sub_mask.shape)
+        subset_loss_list = []
+        context_loss_list = []
+        for i in range(sub_seq.size(0)):
+            user_i = user[i].unsqueeze(0)  # Ensure user tensor is at least 1D
+            item_i = item[i].unsqueeze(0)  # Same for item tensor
+            sub_seq_i = sub_seq[i].unsqueeze(0)
+            sub_mask_i = sub_mask[i].unsqueeze(0)
+            # print(f'sub_seq_i: {sub_seq_i.shape}')
+            # print(f'sub_mask_i: {sub_mask_i.shape}')
+            subset_output, _ = model(user_i, item_i, sub_seq_i, sub_mask_i)
+            context_output, _ = model(user_i, item_i, seq[i].unsqueeze(0), mask[i].unsqueeze(0))
+            subset_loss = subset_output.loss
+            context_loss = context_output.loss
+            subset_loss_list.append(subset_loss)
+            context_loss_list.append(context_loss)
+
+        ratio_loss = torch.tensor(context_loss_list) / torch.tensor(subset_loss_list)
+        ratio_loss_normalized = (ratio_loss - ratio_loss.min()) / (ratio_loss.max() - ratio_loss.min())
+        return ratio_loss_normalized
+
+
+def modify_loss(selector_output, seq, mask, model, user, item):
+    model_loss = []
+    for i in range(seq.size(0)):
+        user_i = user[i].unsqueeze(0)
+        item_i = item[i].unsqueeze(0)
+        seq_i = seq[i].unsqueeze(0)
+        mask_i = mask[i].unsqueeze(0)
+        output,_ = model(user_i, item_i, seq_i, mask_i)
+        model_loss.append(output.loss)
+    model_loss = torch.tensor(model_loss, device=device)
+    selector_output = 1 - selector_output
+    selector_output = selector_output.to(device)
+    modified_loss = model_loss * selector_output
+    return modified_loss.mean()
 
 
 def train(data):
@@ -149,7 +204,7 @@ def train(data):
     rating_loss = 0.
     total_sample = 0
     while True:
-        user, item, rating, seq, mask = data.next_batch()  # data.step += 1
+        user, item, rating, seq, mask,_,_ = data.next_batch()  # data.step += 1
         user = user.to(device)  # (batch_size,)
         item = item.to(device)
         rating = rating.to(device)
@@ -183,6 +238,89 @@ def train(data):
         if data.step == data.total_step:
             break
 
+def train_with_selector(data, train_selector=True):
+    # Turn on training mode which enables dropout.
+    text_loss = 0.
+    total_sample = 0
+    train_steps_selector = 500
+    sequence_length = 15
+    run['num_train_steps_selector'] = train_steps_selector
+    run['sequence_length'] = sequence_length
+    steps = 0
+
+    while True:
+        if steps < train_steps_selector and train_selector:
+            model.eval()
+            bert_model.train()
+            head.train()
+            user, item, _, seq, mask, selector_seq, selector_mask = data.next_batch()
+            # print(user.shape)
+            # print(item.shape)
+            # print(seq.shape)
+            # print(mask.shape)
+            selector_seq = selector_seq.to(device)
+            selector_mask = selector_mask.to(device)
+            seq = seq.to(device)
+            mask = mask.to(device)
+            user = user.to(device)
+            item = item.to(device)
+            selector_embedding = get_cls_embedding(selector_seq, selector_mask)
+            del selector_seq, selector_mask
+            selector_seq, selector_mask = None, None
+            selector_embedding = torch.sigmoid(selector_embedding)
+            selector_embedding = selector_embedding.to(device)
+            labels = create_selector_labels(seq, mask, sequence_length, model, user, item)
+            labels = labels.to(device)
+            selector_embedding = selector_embedding.squeeze(1)
+            selector_loss = head_mse_loss(selector_embedding, labels)
+            optimizer.zero_grad()
+            selector_loss.backward()
+            optimizer.step()
+            run['train/selector_loss'].log(selector_loss.item())
+            steps += 1
+            if steps == train_steps_selector:
+                print('selector training finished')
+                train_selector = False
+        else:
+            model.train()
+            bert_model.eval()
+            head.eval()
+            user, item, rating, seq, mask, selector_seq, selector_mask = data.next_batch()
+            user = user.to(device)  # (batch_size,)
+            item = item.to(device)
+            seq = seq.to(device)  # (batch_size, seq_len)
+            mask = mask.to(device)
+            rating = rating.to(device)
+            selector_seq = selector_seq.to(device)
+            selector_mask = selector_mask.to(device)
+            selector_output = torch.sigmoid(get_cls_embedding(selector_seq, selector_mask))
+            selector_output = selector_output.to(device)
+
+            # data.step += 1
+
+            # Starting each batch, we detach the hidden state from how it was previously produced.
+            # If we didn't, the model would try backpropagating all the way to start of the dataset.
+            optimizer.zero_grad()
+            outputs, rating_p = model(user, item, seq, mask)
+            loss = modify_loss(selector_output, seq, mask, model, user, item)
+            r_loss = rating_criterion(rating_p, rating)
+            loss += rating_reg * r_loss
+            loss.backward()
+            optimizer.step()
+            run['train/loss'].log(loss.item())
+
+            batch_size = user.size(0)
+            text_loss += batch_size * loss.item()
+            total_sample += batch_size
+
+            if data.step % log_interval == 0 or data.step == data.total_step:
+                cur_t_loss = text_loss / total_sample
+                print(now_time() + 'text ppl {:4.4f} | {:5d}/{:5d} batches'.format(math.exp(cur_t_loss), data.step,
+                                                                                   data.total_step))
+                text_loss = 0.
+                total_sample = 0
+            if data.step == data.total_step:
+                break
 
 def evaluate(data):
     # Turn on evaluation mode which disables dropout.
@@ -192,7 +330,7 @@ def evaluate(data):
     total_sample = 0
     with torch.no_grad():
         while True:
-            user, item, rating, seq, mask = data.next_batch()  # data.step += 1
+            user, item, rating, seq, mask,_,_ = data.next_batch()  # data.step += 1
             user = user.to(device)  # (batch_size,)
             item = item.to(device)
             rating = rating.to(device)
@@ -221,7 +359,7 @@ def generate(data):
     rating_predict = []
     with torch.no_grad():
         while True:
-            user, item, rating, seq, _ = data.next_batch()  # data.step += 1
+            user, item, rating, seq, _,_,_ = data.next_batch()  # data.step += 1
             user = user.to(device)  # (batch_size,)
             item = item.to(device)
             text = seq[:, :1].to(device)  # bos, (batch_size, 1)
@@ -249,7 +387,7 @@ best_val_loss = float('inf')
 endure_count = 0
 for epoch in range(1, epochs + 1):
     print(now_time() + 'epoch {}'.format(epoch))
-    train(train_data)
+    train_with_selector(train_data)
     val_t_loss, val_r_loss = evaluate(val_data)
     val_loss = val_t_loss + val_r_loss
     print(now_time() + 'text ppl {:4.4f} | rating loss {:4.4f} | valid loss {:4.4f} on validation'.format(

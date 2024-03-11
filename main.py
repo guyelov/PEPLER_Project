@@ -65,7 +65,7 @@ if config['data_path'] is None:
     raise ValueError('data_path should be provided for loading data in the YAML configuration file')
 if config['index_dir'] is None:
     raise ValueError('index_dir should be provided for loading data splits in the YAML configuration file')
-run = neptune_recoder('PEPLER', ['Selector', 'GUY', 'FIXED?','fixed optim'], dict(config))
+run = neptune_recoder('PEPLER', ['Selector_Tune', 'GUY','Empty Context'], dict(config))
 print('-' * 40 + 'ARGUMENTS' + '-' * 40)
 for arg in vars(args):
     print('{:40} {}'.format(arg, getattr(args, arg)))
@@ -113,8 +113,7 @@ ntoken = len(tokenizer)
 model = ContinuousPromptLearning.from_pretrained('gpt2', nuser, nitem)
 model.resize_token_embeddings(ntoken)  # three tokens added, update embedding table
 model.to(device)
-# optimizer = AdamW(model.parameters(), lr=lr)
-optimizer = AdamW(list(model.parameters()) + list(bert_model.parameters()) + list(head.parameters()), lr=lr)
+optimizer = AdamW(model.parameters(), lr=lr)
 
 
 ###############################################################################
@@ -125,6 +124,11 @@ def get_cls_embedding(input_ids, attention_mask):
     cls_embedding = outputs.last_hidden_state[:, 0, :]
     head_output = head(cls_embedding)
     return head_output
+
+# def create_empty_context(seq, mask, tokenizer):
+#     # Create empty context for the first token
+#     empty = "EMPTY"
+
 
 
 def create_selector_labels(seq, mask, seq_len, model, user, item):
@@ -138,8 +142,12 @@ def create_selector_labels(seq, mask, seq_len, model, user, item):
         for i in range(sub_seq.size(0)):
             user_i = user[i].unsqueeze(0)  # Ensure user tensor is at least 1D
             item_i = item[i].unsqueeze(0)  # Same for item tensor
-            sub_seq_i = sub_seq[i].unsqueeze(0)
-            sub_mask_i = sub_mask[i].unsqueeze(0)
+            # sub_seq_i = sub_seq[i].unsqueeze(0)
+            # sub_mask_i = sub_mask[i].unsqueeze(0)
+            sub_seq_i = tokenizer("Empty", return_tensors="pt")["input_ids"]
+            sub_mask_i = tokenizer("Empty", return_tensors="pt")["attention_mask"]
+            sub_seq_i = sub_seq_i.to(device)
+            sub_mask_i = sub_mask_i.to(device)
             # print(f'sub_seq_i: {sub_seq_i.shape}')
             # print(f'sub_mask_i: {sub_mask_i.shape}')
 
@@ -175,7 +183,7 @@ def train(data):
     text_loss = 0.
     total_sample = 0
     while True:
-        user, item, _, seq, mask,_,_ = data.next_batch()  # data.step += 1
+        user, item, _, seq, mask, _, _ = data.next_batch()  # data.step += 1
         user = user.to(device)  # (batch_size,)
         item = item.to(device)
         seq = seq.to(device)  # (batch_size, seq_len)
@@ -202,11 +210,12 @@ def train(data):
         if data.step == data.total_step:
             break
 
+
 def train_with_selector(data, train_selector=True):
     # Turn on training mode which enables dropout.
     text_loss = 0.
     total_sample = 0
-    train_steps_selector = 500
+    train_steps_selector = 600
     sequence_length = 15
     run['num_train_steps_selector'] = train_steps_selector
     run['sequence_length'] = sequence_length
@@ -214,7 +223,15 @@ def train_with_selector(data, train_selector=True):
 
     while True:
         if steps < train_steps_selector and train_selector:
+        # if train_selector:
             model.eval()
+            # for param in model.parameters():
+            #     param.requires_grad = False
+            # for param in bert_model.parameters():
+            #     param.requires_grad = True
+            # for param in head.parameters():
+            #     param.requires_grad = True
+
             bert_model.train()
             head.train()
             user, item, _, seq, mask, selector_seq, selector_mask = data.next_batch()
@@ -228,27 +245,34 @@ def train_with_selector(data, train_selector=True):
             mask = mask.to(device)
             user = user.to(device)
             item = item.to(device)
+            optimizer.zero_grad()
             selector_embedding = get_cls_embedding(selector_seq, selector_mask)
             del selector_seq, selector_mask
             selector_seq, selector_mask = None, None
-            # selector_embedding = torch.sigmoid(selector_embedding)
+            selector_embedding = torch.sigmoid(selector_embedding)
             selector_embedding = selector_embedding.to(device)
             labels = create_selector_labels(seq, mask, sequence_length, model, user, item)
             labels = labels.to(device)
             selector_embedding = selector_embedding.squeeze(1)
             selector_loss = head_mse_loss(selector_embedding, labels)
-            optimizer.zero_grad()
             selector_loss.backward()
             optimizer.step()
             run['train/selector_loss'].log(selector_loss.item())
             steps += 1
-            if steps == train_steps_selector:
+            if data.step == data.total_step:
                 print('selector training finished')
                 train_selector = False
+                break
         else:
             model.train()
             bert_model.eval()
             head.eval()
+            # for param in model.parameters():
+            #     param.requires_grad = True
+            # for param in bert_model.parameters():
+            #     param.requires_grad = False
+            # for param in head.parameters():
+            #     param.requires_grad = False
             user, item, _, seq, mask, selector_seq, selector_mask = data.next_batch()
             user = user.to(device)  # (batch_size,)
             item = item.to(device)
@@ -256,6 +280,7 @@ def train_with_selector(data, train_selector=True):
             mask = mask.to(device)
             selector_seq = selector_seq.to(device)
             selector_mask = selector_mask.to(device)
+            optimizer.zero_grad()
             selector_output = torch.sigmoid(get_cls_embedding(selector_seq, selector_mask))
             selector_output = selector_output.to(device)
 
@@ -263,7 +288,6 @@ def train_with_selector(data, train_selector=True):
 
             # Starting each batch, we detach the hidden state from how it was previously produced.
             # If we didn't, the model would try backpropagating all the way to start of the dataset.
-            optimizer.zero_grad()
             # outputs = model(user, item, seq, mask)
             loss = modify_loss(selector_output, seq, mask, model, user, item)
             loss.backward()
@@ -284,25 +308,67 @@ def train_with_selector(data, train_selector=True):
                 break
 
 
-def evaluate(data, train_stage='prompt_tune'):
+# def evaluate(data, train_stage='prompt_tune'):
+#     # Turn on evaluation mode which disables dropout.
+#     model.eval()
+#     text_loss = 0.
+#     total_sample = 0
+#     with torch.no_grad():
+#         while True:
+#             user, item, _, seq, mask, _, _ = data.next_batch()  # data.step += 1
+#             user = user.to(device)  # (batch_size,)
+#             item = item.to(device)
+#             seq = seq.to(device)  # (batch_size, seq_len)
+#             mask = mask.to(device)
+#             outputs = model(user, item, seq, mask)
+#             loss = outputs.loss
+#             run[f'{train_stage}_val/loss'].log(loss.item())
+#
+#             batch_size = user.size(0)
+#             text_loss += batch_size * loss.item()
+#             total_sample += batch_size
+#
+#             if data.step == data.total_step:
+#                 break
+#     return text_loss / total_sample
+def evaluate(data, train_stage='prompt_tune', with_selector=False):
     # Turn on evaluation mode which disables dropout.
     model.eval()
     text_loss = 0.
     total_sample = 0
     with torch.no_grad():
         while True:
-            user, item, _, seq, mask, _, _ = data.next_batch()  # data.step += 1
-            user = user.to(device)  # (batch_size,)
-            item = item.to(device)
-            seq = seq.to(device)  # (batch_size, seq_len)
-            mask = mask.to(device)
-            outputs = model(user, item, seq, mask)
-            loss = outputs.loss
-            run[f'{train_stage}_val/loss'].log(loss.item())
+            if with_selector:
+                bert_model.eval()
+                head.eval()
+                user, item, _, seq, mask, selector_seq, selector_mask = data.next_batch()
+                selector_seq = selector_seq.to(device)
+                selector_mask = selector_mask.to(device)
+                selector_output = get_cls_embedding(selector_seq, selector_mask)
+                selector_output = torch.sigmoid(selector_output)
+                selector_output = selector_output.to(device)
+                user = user.to(device)
+                item = item.to(device)
+                seq = seq.to(device)
+                mask = mask.to(device)
+                loss = modify_loss(selector_output, seq, mask, model, user, item)
+                run[f'{train_stage}_val/loss'].log(loss.item())
+                batch_size = user.size(0)
+                text_loss += batch_size * loss.item()
+                total_sample += batch_size
+            else:
+                user, item, _, seq, mask, _, _ = data.next_batch()  # data.step += 1
+                user = user.to(device)  # (batch_size,)
+                item = item.to(device)
+                seq = seq.to(device)  # (batch_size, seq_len)
+                mask = mask.to(device)
+                outputs = model(user, item, seq, mask)
+                loss = outputs.loss
+                run[f'{train_stage}_val/loss'].log(loss.item())
 
-            batch_size = user.size(0)
-            text_loss += batch_size * loss.item()
-            total_sample += batch_size
+                batch_size = user.size(0)
+                text_loss += batch_size * loss.item()
+                total_sample += batch_size
 
             if data.step == data.total_step:
                 break
@@ -342,6 +408,7 @@ endure_count = 0
 train_selector = True
 for epoch in range(1, epochs + 1):
     print(now_time() + 'epoch {}'.format(epoch))
+    # train_with_selector(train_data, train_selector)
     train(train_data)
     train_selector = False
     val_loss = evaluate(val_data, 'prompt_tune')
@@ -365,17 +432,24 @@ with open(model_path, 'rb') as f:
 print(now_time() + 'Tuning both Prompt and LM')
 for param in model.parameters():
     param.requires_grad = True
-optimizer = AdamW(model.parameters(), lr=lr)
+for param in bert_model.parameters():
+    param.requires_grad = True
+for param in head.parameters():
+    param.requires_grad = True
+
+# optimizer = AdamW(model.parameters(), lr=lr)
+optimizer = AdamW(list(model.parameters()) + list(bert_model.parameters()) + list(head.parameters()), lr=lr)
 
 # Loop over epochs.
 best_val_loss = float('inf')
 endure_count = 0
-train_selector = True
 for epoch in range(1, epochs + 1):
     print(now_time() + 'epoch {}'.format(epoch))
+    train_selector = True
     train_with_selector(train_data, train_selector)
-    train_selector = False
-    val_loss = evaluate(val_data, 'both_tune')
+    # train_selector = False
+    # train_with_selector(train_data, train_selector)
+    val_loss = evaluate(val_data, 'both_tune', with_selector=True)
     print(now_time() + 'text ppl {:4.4f} | valid loss {:4.4f} on validation'.format(math.exp(val_loss), val_loss))
     # Save the model if the validation loss is the best we've seen so far.
     if val_loss < best_val_loss:
