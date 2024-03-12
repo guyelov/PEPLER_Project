@@ -65,7 +65,7 @@ if config['data_path'] is None:
     raise ValueError('data_path should be provided for loading data in the YAML configuration file')
 if config['index_dir'] is None:
     raise ValueError('index_dir should be provided for loading data splits in the YAML configuration file')
-run = neptune_recoder('PEPLER', ['Selector_Tune', 'GUY','Empty Context'], dict(config))
+run = neptune_recoder('PEPLER', ['Selector_Tune', 'GUY','Empty Context','No Sigmoid'], dict(config))
 print('-' * 40 + 'ARGUMENTS' + '-' * 40)
 for arg in vars(args):
     print('{:40} {}'.format(arg, getattr(args, arg)))
@@ -252,7 +252,7 @@ def train_with_selector(data, train_selector=True,optimizer=None):
             print(f'selector_embedding: {selector_embedding}')
             del selector_seq, selector_mask
             selector_seq, selector_mask = None, None
-            selector_embedding = torch.sigmoid(selector_embedding)
+            # selector_embedding = torch.sigmoid(selector_embedding)
             selector_embedding = selector_embedding.to(device)
             labels = create_selector_labels(seq, mask, sequence_length, model, user, item)
             labels = labels.to(device)
@@ -262,9 +262,13 @@ def train_with_selector(data, train_selector=True,optimizer=None):
             optimizer.step()
             run['train/selector_loss'].log(selector_loss.item())
             steps += 1
-            if data.step == data.total_step:
+            if steps == train_steps_selector:
                 print('selector training finished')
                 train_selector = False
+            # if data.step == data.total_step:
+            #     print('selector training finished')
+            #     train_selector = False
+            #     break
         else:
             model.train()
             bert_model.eval()
@@ -449,7 +453,7 @@ for epoch in range(1, epochs + 1):
     train_selector = True
     train_with_selector(train_data, train_selector,optimizer)
     # train_selector = False
-    # train_with_selector(train_data, train_selector)
+    # train_with_selector(train_data, train_selector,optimizer)
     val_loss = evaluate(val_data, 'both_tune', with_selector=False)
     print(now_time() + 'text ppl {:4.4f} | valid loss {:4.4f} on validation'.format(math.exp(val_loss), val_loss))
     # Save the model if the validation loss is the best we've seen so far.
