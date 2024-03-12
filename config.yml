@@ -1,7 +1,7 @@
 data_path: "/sise/home/guyelov/PEPLER/data/"
 index_dir: "/sise/home/guyelov/PEPLER/data/"
 lr: 0.001
-epochs: 100
+epochs: 1
 batch_size: 128
 cuda: false
 log_interval: 200

@@ -89,11 +89,14 @@ eos = '<eos>'
 pad = '<pad>'
 tokenizer = GPT2Tokenizer.from_pretrained('gpt2', bos_token=bos, eos_token=eos, pad_token=pad)
 selector_tokenizer = BertTokenizer.from_pretrained('bert-base-uncased', pad_token=pad)
+# selector_tokenizer = BertTokenizer.from_pretrained('bert-large-uncased', pad_token=pad)
 selector_tokenizer.add_special_tokens({'additional_special_tokens': [bos, eos]})
 bert_model = BertModel.from_pretrained('bert-base-uncased')
+# bert_model = BertModel.from_pretrained('bert-large-uncased')
 bert_model.resize_token_embeddings(len(selector_tokenizer))
 bert_model.to(device)
 head = torch.nn.Linear(768, 1)
+# head = torch.nn.Linear(1024, 1) # for bert-large
 head.to(device)
 head_mse_loss = torch.nn.MSELoss()
 corpus = DataLoader(data_path, index_dir, tokenizer, words, selector_tokenizer=selector_tokenizer)
@@ -113,7 +116,6 @@ ntoken = len(tokenizer)
 model = ContinuousPromptLearning.from_pretrained('gpt2', nuser, nitem)
 model.resize_token_embeddings(ntoken)  # three tokens added, update embedding table
 model.to(device)
-optimizer = AdamW(model.parameters(), lr=lr)
 
 
 ###############################################################################
@@ -172,12 +174,13 @@ def modify_loss(selector_output, seq, mask, model, user, item):
         model_loss.append(model(user_i, item_i, seq_i, mask_i).loss)
     model_loss = torch.tensor(model_loss, device=device)
     selector_output = 1 - selector_output
+    print(f'weight: {selector_output}' )
     selector_output = selector_output.to(device)
     modified_loss = model_loss * selector_output
     return modified_loss.mean()
 
 
-def train(data):
+def train(data,optimizer):
     # Turn on training mode which enables dropout.
     model.train()
     text_loss = 0.
@@ -200,7 +203,6 @@ def train(data):
         batch_size = user.size(0)
         text_loss += batch_size * loss.item()
         total_sample += batch_size
-
         if data.step % log_interval == 0 or data.step == data.total_step:
             cur_t_loss = text_loss / total_sample
             print(now_time() + 'text ppl {:4.4f} | {:5d}/{:5d} batches'.format(math.exp(cur_t_loss), data.step,
@@ -211,11 +213,11 @@ def train(data):
             break
 
 
-def train_with_selector(data, train_selector=True):
+def train_with_selector(data, train_selector=True,optimizer=None):
     # Turn on training mode which enables dropout.
     text_loss = 0.
     total_sample = 0
-    train_steps_selector = 600
+    train_steps_selector = 500
     sequence_length = 15
     run['num_train_steps_selector'] = train_steps_selector
     run['sequence_length'] = sequence_length
@@ -247,6 +249,7 @@ def train_with_selector(data, train_selector=True):
             item = item.to(device)
             optimizer.zero_grad()
             selector_embedding = get_cls_embedding(selector_seq, selector_mask)
+            print(f'selector_embedding: {selector_embedding}')
             del selector_seq, selector_mask
             selector_seq, selector_mask = None, None
             selector_embedding = torch.sigmoid(selector_embedding)
@@ -262,7 +265,6 @@ def train_with_selector(data, train_selector=True):
             if data.step == data.total_step:
                 print('selector training finished')
                 train_selector = False
-                break
         else:
             model.train()
             bert_model.eval()
@@ -400,17 +402,16 @@ def generate(data):
                 break
     return idss_predict
 
+optimizer = AdamW(model.parameters(), lr=lr)
 
 print(now_time() + 'Tuning Prompt Only')
 # Loop over epochs.
 best_val_loss = float('inf')
 endure_count = 0
-train_selector = True
 for epoch in range(1, epochs + 1):
     print(now_time() + 'epoch {}'.format(epoch))
     # train_with_selector(train_data, train_selector)
-    train(train_data)
-    train_selector = False
+    train(train_data,optimizer)
     val_loss = evaluate(val_data, 'prompt_tune')
     print(now_time() + 'text ppl {:4.4f} | valid loss {:4.4f} on validation'.format(math.exp(val_loss), val_loss))
     # Save the model if the validation loss is the best we've seen so far.
@@ -446,10 +447,10 @@ endure_count = 0
 for epoch in range(1, epochs + 1):
     print(now_time() + 'epoch {}'.format(epoch))
     train_selector = True
-    train_with_selector(train_data, train_selector)
+    train_with_selector(train_data, train_selector,optimizer)
     # train_selector = False
     # train_with_selector(train_data, train_selector)
-    val_loss = evaluate(val_data, 'both_tune', with_selector=True)
+    val_loss = evaluate(val_data, 'both_tune', with_selector=False)
     print(now_time() + 'text ppl {:4.4f} | valid loss {:4.4f} on validation'.format(math.exp(val_loss), val_loss))
     # Save the model if the validation loss is the best we've seen so far.
     if val_loss < best_val_loss:
