@@ -250,8 +250,6 @@ def train_with_selector(data, train_selector=True,optimizer=None):
             optimizer.zero_grad()
             selector_embedding = get_cls_embedding(selector_seq, selector_mask)
             print(f'selector_embedding: {selector_embedding}')
-            del selector_seq, selector_mask
-            selector_seq, selector_mask = None, None
             selector_embedding = torch.sigmoid(selector_embedding)
             selector_embedding = selector_embedding.to(device)
             labels = create_selector_labels(seq, mask, sequence_length, model, user, item)
