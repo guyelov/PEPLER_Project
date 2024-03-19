@@ -8,8 +8,6 @@ from module import ContinuousPromptLearning
 from utils import rouge_score, bleu_score, DataLoader, Batchify, now_time, ids2tokens, unique_sentence_percent, \
     feature_detect, feature_matching_ratio, feature_coverage_ratio, feature_diversity
 import neptune
-
-
 # pl.seed_everything(42)
 
 def neptune_recoder(exp_name, tags, hyperparameters):
@@ -69,7 +67,7 @@ if config['index_dir'] is None:
     raise ValueError('index_dir should be provided for loading data splits in the YAML configuration file')
 run = neptune_recoder('PEPLER',
                       ['Selector_Tune', 'GUY', 'Empty Context', 'Full train',
-                       'gpt2-medium','BERT LARGE','selector all'], dict(config))
+                       'gpt2-medium','BERT LARGE','lr 3e-4'], dict(config))
 print('-' * 40 + 'ARGUMENTS' + '-' * 40)
 for arg in vars(args):
     print('{:40} {}'.format(arg, getattr(args, arg)))
@@ -184,7 +182,7 @@ def modify_loss(selector_output, seq, mask, model, user, item):
         model_loss.append(model(user_i, item_i, seq_i, mask_i).loss * selector_output_i_float)
     model_loss = torch.tensor(model_loss, device=device, requires_grad=True)
     selector_output = 1 - selector_output
-    print(f'weight: {selector_output}')
+    # print(f'weight: {selector_output}')
     # selector_output = selector_output.to(device)
     # modified_loss = model_loss * selector_output
     return model_loss.mean()
@@ -266,7 +264,7 @@ def train_with_selector(data, train_selector=True, optimizer_selector=None, opti
             optimizer_selector.zero_grad()
             selector_embedding = get_cls_embedding(selector_seq, selector_mask)
             selector_embedding = torch.sigmoid(selector_embedding)
-            print(f'selector_embedding: {selector_embedding}')
+            # print(f'selector_embedding: {selector_embedding}')
 
             selector_embedding = selector_embedding.to(device)
             labels = create_selector_labels(seq, mask, sequence_length, model, user, item)
@@ -440,7 +438,7 @@ print(now_time() + 'Tuning Prompt Only')
 # Loop over epochs.
 best_val_loss = float('inf')
 endure_count = 0
-train_selector = True
+train_selector = False
 for epoch in range(1, epochs + 1):
     print(now_time() + 'epoch {}'.format(epoch))
     # train_with_selector(train_data, True,optimizer_selector,optimizer_model)

@@ -4,7 +4,6 @@
 ### sbatch configuration parameters must start with #SBATCH and must precede any other commands.
 ### To ignore, just add another # - like ##SBATCH
 ##################
-
 #SBATCH --partition main			### specify partition name where to run a job. debug: 2 hours limit; short: 7 days limit
 #SBATCH --time 6-23:59:59			### limit the time of job running, partition limit can override this. Format: D-H:MM:SS
 #SBATCH --job-name PEPLER-%J			### name of the job
