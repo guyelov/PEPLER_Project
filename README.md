@@ -3,12 +3,6 @@
 ## Paper
 - Lei Li, Yongfeng Zhang, Li Chen. [Personalized Prompt Learning for Explainable Recommendation](https://arxiv.org/abs/2202.07371). ACM Transactions on Information Systems (TOIS), 2023.
 
-**A T5 version that can perform multiple recommendation tasks is available at [POD](https://github.com/lileipisces/POD)!**
-
-**A small unpretrained Transformer version is available at [PETER](https://github.com/lileipisces/PETER)!**
-
-**A small ecosystem for Recommender Systems-based Natural Language Generation is available at [NLG4RS](https://github.com/lileipisces/NLG4RS)!**
-
 ## Datasets to [download](https://lifehkbueduhk-my.sharepoint.com/:f:/g/personal/16484134_life_hkbu_edu_hk/Eln600lqZdVBslRwNcAJL5cBarq6Mt8WzDKpkq1YCqQjfQ?e=cISb1C)
 - TripAdvisor Hong Kong
 - Amazon Movies & TV
@@ -17,7 +11,11 @@
 For those who are interested in how to obtain (feature, opinion, template, sentiment) quadruples, please refer to [Sentires-Guide](https://github.com/lileipisces/Sentires-Guide).
 
 ## Usage
-Below are examples of how to run PEPLER (continuous prompt, discrete prompt, MF regularization and MLP regularization).
+Below are examples of how to run PEPLER for reproducing the results and when using our proposed improvement method.
+The main branch contains the code for reproducing the results.
+In addition, the config file contains more parameters, which are the default parameters as used in the paper.
+
+To run our improvement method, simply switch to the selector_fixed branch and run one of these commands:
 ```
 python -u main.py \
 --data_path ../TripAdvisor/reviews.pickle \
@@ -53,7 +51,7 @@ python -u reg.py \
 
 ## Code reference
 - [mkultra: Prompt Tuning Toolkit for GPT-2](https://github.com/corolla-johnson/mkultra)
-
+- [PEPLER: PErsonalized Prompt Learning for Explainable Recommendation](https://github.com/lileipisces/PEPLER?tab=readme-ov-file)
 ## Citation
 ```
 @article{TOIS23-PEPLER,
