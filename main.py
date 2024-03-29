@@ -129,30 +129,21 @@ def get_cls_embedding(input_ids, attention_mask):
     return head_output
 
 
-# def create_empty_context(seq, mask, tokenizer):
-#     # Create empty context for the first token
-#     empty = "EMPTY"
-
 
 def create_selector_labels(seq, mask, seq_len, model, user, item):
     with torch.no_grad():
         sub_seq = seq[:, :seq_len]
         sub_mask = mask[:, :seq_len]
-        # print(sub_seq.shape)
-        # print(sub_mask.shape)
         subset_loss_list = []
         context_loss_list = []
         for i in range(sub_seq.size(0)):
             user_i = user[i].unsqueeze(0)  # Ensure user tensor is at least 1D
             item_i = item[i].unsqueeze(0)  # Same for item tensor
-            # sub_seq_i = sub_seq[i].unsqueeze(0)
-            # sub_mask_i = sub_mask[i].unsqueeze(0)
             sub_seq_i = tokenizer("Empty", return_tensors="pt")["input_ids"]
             sub_mask_i = tokenizer("Empty", return_tensors="pt")["attention_mask"]
             sub_seq_i = sub_seq_i.to(device)
             sub_mask_i = sub_mask_i.to(device)
-            # print(f'sub_seq_i: {sub_seq_i.shape}')
-            # print(f'sub_mask_i: {sub_mask_i.shape}')
+
 
             subset_loss = model(user_i, item_i, sub_seq_i, sub_mask_i).loss
             context_loss = model(user_i, item_i, seq[i].unsqueeze(0), mask[i].unsqueeze(0)).loss
@@ -161,12 +152,9 @@ def create_selector_labels(seq, mask, seq_len, model, user, item):
             context_loss_list.append(context_loss)
 
         ratio_loss = torch.tensor(context_loss_list) / torch.tensor(subset_loss_list, dtype=torch.float32)
-        # ratio_labels = torch.where(ratio_loss > 1, torch.tensor(0), torch.tensor(1))
-        # ratio_labels = ratio_labels.to(device, dtype=torch.float32)
         ratio_loss_normalized = (ratio_loss - ratio_loss.min()) / (ratio_loss.max() - ratio_loss.min())
         return ratio_loss_normalized
-        # return ratio_loss
-        # return ratio_labels
+
 
 
 def modify_loss(selector_output, seq, mask, model, user, item):
@@ -232,7 +220,6 @@ def train_with_selector(data, train_selector=True, optimizer_selector=None, opti
     steps = 0
 
     while True:
-        # if steps < train_steps_selector and train_selector:
         if train_selector:
             model.eval()
             if not prompt_tune:
@@ -251,10 +238,6 @@ def train_with_selector(data, train_selector=True, optimizer_selector=None, opti
             bert_model.train()
             head.train()
             user, item, _, seq, mask, selector_seq, selector_mask = data.next_batch()
-            # print(user.shape)
-            # print(item.shape)
-            # print(seq.shape)
-            # print(mask.shape)
             selector_seq = selector_seq.to(device)
             selector_mask = selector_mask.to(device)
             seq = seq.to(device)
@@ -264,8 +247,6 @@ def train_with_selector(data, train_selector=True, optimizer_selector=None, opti
             optimizer_selector.zero_grad()
             selector_embedding = get_cls_embedding(selector_seq, selector_mask)
             selector_embedding = torch.sigmoid(selector_embedding)
-            # print(f'selector_embedding: {selector_embedding}')
-
             selector_embedding = selector_embedding.to(device)
             labels = create_selector_labels(seq, mask, sequence_length, model, user, item)
             labels = labels.to(device)
@@ -275,14 +256,6 @@ def train_with_selector(data, train_selector=True, optimizer_selector=None, opti
             optimizer_selector.step()
             run['train/selector_loss'].log(selector_loss.item())
             steps += 1
-            # if steps == train_steps_selector:
-            #     print('selector training finished')
-            #     train_selector = False
-            # if data.step == data.total_step:
-            #     print('selector training finished')
-            #     train_selector = False
-            #     break
-            # else:
             bert_model.eval()
             head.eval()
             model.train()
@@ -298,27 +271,7 @@ def train_with_selector(data, train_selector=True, optimizer_selector=None, opti
                     param.requires_grad = False
                 for param in head.parameters():
                     param.requires_grad = False
-            # user, item, _, seq, mask, selector_seq, selector_mask = data.next_batch()
-            # user = user.to(device)  # (batch_size,)
-            # item = item.to(device)
-            # seq = seq.to(device)  # (batch_size, seq_len)
-            # mask = mask.to(device)
-            # selector_seq = selector_seq.to(device)
-            # selector_mask = selector_mask.to(device)
-            # with torch.no_grad():
-            # selector_output = torch.sigmoid(get_cls_embedding(selector_seq, selector_mask))
-            # selector_output = selector_output.to(device)
             optimizer_model.zero_grad()
-
-            # data.step += 1
-
-            # Starting each batch, we detach the hidden state from how it was previously produced.
-            # If we didn't, the model would try backpropagating all the way to start of the dataset.
-            # outputs = model(user, item, seq, mask)
-            # loss = outputs.loss
-            # loss = loss*2
-            # selector_output = torch.sigmoid(get_cls_embedding(selector_seq, selector_mask))
-            # selector_output = selector_output.to(device)
             loss = modify_loss(selector_embedding, seq, mask, model, user, item)
             loss.backward()
             optimizer_model.step()
@@ -337,30 +290,6 @@ def train_with_selector(data, train_selector=True, optimizer_selector=None, opti
             if data.step == data.total_step:
                 break
 
-
-# def evaluate(data, train_stage='prompt_tune'):
-#     # Turn on evaluation mode which disables dropout.
-#     model.eval()
-#     text_loss = 0.
-#     total_sample = 0
-#     with torch.no_grad():
-#         while True:
-#             user, item, _, seq, mask, _, _ = data.next_batch()  # data.step += 1
-#             user = user.to(device)  # (batch_size,)
-#             item = item.to(device)
-#             seq = seq.to(device)  # (batch_size, seq_len)
-#             mask = mask.to(device)
-#             outputs = model(user, item, seq, mask)
-#             loss = outputs.loss
-#             run[f'{train_stage}_val/loss'].log(loss.item())
-#
-#             batch_size = user.size(0)
-#             text_loss += batch_size * loss.item()
-#             total_sample += batch_size
-#
-#             if data.step == data.total_step:
-#                 break
-#     return text_loss / total_sample
 def evaluate(data, train_stage='prompt_tune', with_selector=False):
     # Turn on evaluation mode which disables dropout.
     model.eval()
@@ -441,13 +370,10 @@ endure_count = 0
 train_selector = False
 for epoch in range(1, epochs + 1):
     print(now_time() + 'epoch {}'.format(epoch))
-    # train_with_selector(train_data, True,optimizer_selector,optimizer_model)
     if train_selector:
         train_with_selector(train_data, True, optimizer_selector, optimizer_model,prompt_tune = True)
-        # train_selector = False
     else:
         train(train_data, optimizer_model)
-    # train(train_data,optimizer_model)
     val_loss = evaluate(val_data, 'prompt_tune')
     print(now_time() + 'text ppl {:4.4f} | valid loss {:4.4f} on validation'.format(math.exp(val_loss), val_loss))
     # Save the model if the validation loss is the best we've seen so far.
@@ -475,8 +401,6 @@ for param in bert_model.parameters():
 for param in head.parameters():
     param.requires_grad = True
 
-# optimizer = AdamW(model.parameters(), lr=lr)
-# optimizer = AdamW(list(model.parameters()) + list(bert_model.parameters()) + list(head.parameters()), lr=lr)
 optimizer_selector = AdamW(list(bert_model.parameters()) + list(head.parameters()), lr=lr)
 optimizer_model = AdamW(model.parameters(), lr=lr)
 # Loop over epochs.
